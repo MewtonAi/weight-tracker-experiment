@@ -72,5 +72,38 @@ class WeightRepository:
         conn.close()
         return [dict(r) for r in rows]
 
+    def list_entries_for_export(self) -> list[dict]:
+        conn = get_conn()
+        rows = conn.execute(
+            "SELECT entry_date, weight_kg, note FROM weight_entries ORDER BY entry_date DESC, id DESC"
+        ).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
+    def get_goal_weight(self) -> float | None:
+        conn = get_conn()
+        row = conn.execute("SELECT goal_weight_kg FROM goal_settings WHERE id=1").fetchone()
+        conn.close()
+        return float(row["goal_weight_kg"]) if row and row["goal_weight_kg"] is not None else None
+
+    def upsert_goal_weight(self, goal_weight_kg: float) -> float:
+        conn = get_conn()
+        try:
+            conn.execute(
+                """
+                INSERT INTO goal_settings (id, goal_weight_kg, updated_at)
+                VALUES (1, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(id) DO UPDATE SET
+                    goal_weight_kg=excluded.goal_weight_kg,
+                    updated_at=CURRENT_TIMESTAMP
+                """,
+                (goal_weight_kg,),
+            )
+            conn.commit()
+            row = conn.execute("SELECT goal_weight_kg FROM goal_settings WHERE id=1").fetchone()
+            return float(row["goal_weight_kg"])
+        finally:
+            conn.close()
+
     def is_unique_violation(self, exc: sqlite3.IntegrityError) -> bool:
         return "weight_entries.entry_date" in str(exc) or "UNIQUE constraint failed" in str(exc)

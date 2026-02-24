@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AppShell,
   ActionIcon,
@@ -21,10 +21,23 @@ import {
 } from '@mantine/core';
 import { DateInput } from '@mantine/dates';
 import { useMediaQuery } from '@mantine/hooks';
-import { IconCheck, IconEdit, IconInfoCircle, IconMoon, IconSun, IconTrash, IconX } from '@tabler/icons-react';
+import {
+  IconCheck,
+  IconDownload,
+  IconEdit,
+  IconInfoCircle,
+  IconMoon,
+  IconSun,
+  IconTrash,
+  IconX,
+} from '@tabler/icons-react';
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 
 const API = 'http://127.0.0.1:8000';
+
+function parseApiError(responseBody, fallback) {
+  return responseBody?.message || fallback;
+}
 
 export default function App() {
   const { colorScheme, setColorScheme } = useMantineColorScheme();
@@ -32,13 +45,17 @@ export default function App() {
 
   const [entries, setEntries] = useState([]);
   const [stats, setStats] = useState({});
+  const [goal, setGoal] = useState({});
   const [entryDate, setEntryDate] = useState(new Date());
   const [weight, setWeight] = useState(70);
   const [note, setNote] = useState('');
   const [editingId, setEditingId] = useState(null);
+  const [goalInput, setGoalInput] = useState(70);
 
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isGoalSaving, setIsGoalSaving] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
   const [deletingId, setDeletingId] = useState(null);
   const [notification, setNotification] = useState(null);
   const notificationTimeoutRef = useRef(null);
@@ -51,17 +68,23 @@ export default function App() {
 
   const loadData = async () => {
     try {
-      const [entriesRes, statsRes] = await Promise.all([
+      const [entriesRes, statsRes, goalRes] = await Promise.all([
         fetch(`${API}/entries`),
         fetch(`${API}/stats`),
+        fetch(`${API}/goal`),
       ]);
 
-      if (!entriesRes.ok || !statsRes.ok) {
+      if (!entriesRes.ok || !statsRes.ok || !goalRes.ok) {
         throw new Error('Unable to load data from server.');
       }
 
       setEntries(await entriesRes.json());
       setStats(await statsRes.json());
+      const goalPayload = await goalRes.json();
+      setGoal(goalPayload);
+      if (goalPayload.goal_weight_kg) {
+        setGoalInput(goalPayload.goal_weight_kg);
+      }
     } catch (error) {
       showNotification('error', error.message || 'Failed to load latest data.');
     } finally {
@@ -104,7 +127,8 @@ export default function App() {
       });
 
       if (!response.ok) {
-        throw new Error(editingId ? 'Failed to update entry.' : 'Failed to add entry.');
+        const errBody = await response.json().catch(() => null);
+        throw new Error(parseApiError(errBody, editingId ? 'Failed to update entry.' : 'Failed to add entry.'));
       }
 
       if (editingId) {
@@ -118,6 +142,50 @@ export default function App() {
       showNotification('error', error.message || 'Could not save entry.');
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const saveGoal = async () => {
+    setIsGoalSaving(true);
+    try {
+      const response = await fetch(`${API}/goal`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ goal_weight_kg: Number(goalInput) }),
+      });
+      if (!response.ok) {
+        const errBody = await response.json().catch(() => null);
+        throw new Error(parseApiError(errBody, 'Failed to save goal.'));
+      }
+      setGoal(await response.json());
+      showNotification('success', 'Goal updated.');
+    } catch (error) {
+      showNotification('error', error.message || 'Could not save goal.');
+    } finally {
+      setIsGoalSaving(false);
+    }
+  };
+
+  const exportCsv = async () => {
+    setIsExporting(true);
+    try {
+      const response = await fetch(`${API}/entries/export.csv`);
+      if (!response.ok) {
+        throw new Error('Failed to export CSV.');
+      }
+      const csvText = await response.text();
+      const blob = new Blob([csvText], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `weight-entries-${new Date().toISOString().slice(0, 10)}.csv`;
+      link.click();
+      URL.revokeObjectURL(url);
+      showNotification('success', 'CSV exported.');
+    } catch (error) {
+      showNotification('error', error.message || 'Could not export CSV.');
+    } finally {
+      setIsExporting(false);
     }
   };
 
@@ -135,7 +203,8 @@ export default function App() {
       const response = await fetch(`${API}/entries/${id}`, { method: 'DELETE' });
 
       if (!response.ok) {
-        throw new Error('Failed to delete entry.');
+        const errBody = await response.json().catch(() => null);
+        throw new Error(parseApiError(errBody, 'Failed to delete entry.'));
       }
 
       if (editingId === id) {
@@ -201,6 +270,32 @@ export default function App() {
           </SimpleGrid>
 
           <Card withBorder>
+            <Group justify="space-between" align="end" wrap="wrap">
+              <Stack gap={4}>
+                <Text size="sm">Goal weight</Text>
+                <Group gap="xs">
+                  <NumberInput
+                    value={goalInput}
+                    onChange={setGoalInput}
+                    min={20}
+                    max={400}
+                    step={0.1}
+                    w={140}
+                    disabled={isGoalSaving}
+                  />
+                  <Button size="xs" onClick={saveGoal} loading={isGoalSaving}>Save goal</Button>
+                </Group>
+              </Stack>
+              <Stack gap={2} align="flex-end">
+                <Text size="sm">Current: {goal.current_weight ?? '-'} kg</Text>
+                <Text size="sm">Goal: {goal.goal_weight_kg ?? '-'} kg</Text>
+                <Text size="sm">Remaining: {goal.remaining_kg ?? '-'} kg</Text>
+                <Text size="sm">Progress: {goal.progress_percent ?? '-'}%</Text>
+              </Stack>
+            </Group>
+          </Card>
+
+          <Card withBorder>
             <SimpleGrid cols={{ base: 1, sm: 2, md: 4 }} spacing="sm" verticalSpacing="sm">
               <DateInput label="Date" value={entryDate} onChange={setEntryDate} disabled={isSubmitting} />
               <NumberInput
@@ -224,7 +319,18 @@ export default function App() {
           </Card>
 
           <Card withBorder h={isMobile ? 260 : 320}>
-            <Title order={4} mb="sm">Progress</Title>
+            <Group justify="space-between" mb="sm">
+              <Title order={4}>Progress</Title>
+              <Button
+                variant="light"
+                size="xs"
+                leftSection={<IconDownload size={14} />}
+                onClick={exportCsv}
+                loading={isExporting}
+              >
+                Export CSV
+              </Button>
+            </Group>
             {isLoading ? (
               <Group justify="center" h="85%">
                 <Loader size="sm" />

@@ -22,6 +22,15 @@ def _reset_schema(db_file: Path) -> None:
         """
     )
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_weight_entries_entry_date ON weight_entries(entry_date)")
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS goal_settings (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            goal_weight_kg REAL NOT NULL,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
     conn.commit()
     conn.close()
 
@@ -61,3 +70,33 @@ def test_validation_error_shape(tmp_path: Path):
     body = r.json()
     assert body["code"] == "VALIDATION_ERROR"
     assert isinstance(body.get("details"), list)
+
+
+def test_goal_roundtrip(tmp_path: Path):
+    db.DB_PATH = str(tmp_path / "test.db")
+    _reset_schema(Path(db.DB_PATH))
+    client = TestClient(app)
+
+    create = client.post("/entries", json={"entry_date": "2026-02-21", "weight_kg": 88.0, "note": None})
+    assert create.status_code == 200
+
+    update_goal = client.put("/goal", json={"goal_weight_kg": 80})
+    assert update_goal.status_code == 200
+    body = update_goal.json()
+    assert body["goal_weight_kg"] == 80
+    assert body["current_weight"] == 88.0
+    assert body["remaining_kg"] == 8.0
+
+
+def test_csv_export_returns_rows(tmp_path: Path):
+    db.DB_PATH = str(tmp_path / "test.db")
+    _reset_schema(Path(db.DB_PATH))
+    client = TestClient(app)
+
+    client.post("/entries", json={"entry_date": "2026-02-20", "weight_kg": 81.2, "note": "Morning"})
+    response = client.get("/entries/export.csv")
+
+    assert response.status_code == 200
+    assert "text/csv" in response.headers["content-type"]
+    assert "date,weight_kg,note" in response.text
+    assert "2026-02-20,81.2,Morning" in response.text

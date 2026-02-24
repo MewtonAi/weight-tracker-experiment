@@ -1,6 +1,8 @@
+import csv
+import io
 import sqlite3
 
-from app.models.schemas import StatsOut, WeightEntryCreate, WeightEntryUpdate
+from app.models.schemas import GoalOut, GoalUpdate, StatsOut, WeightEntryCreate, WeightEntryUpdate
 from app.repositories.weight_repository import WeightRepository
 from app.services.errors import EntryDateExistsError, NotFoundError
 
@@ -71,3 +73,47 @@ class WeightService:
             change_last_7=change_last_7,
             avg_last_7=avg_last_7,
         )
+
+    def get_goal(self) -> GoalOut:
+        goal_weight = self.repository.get_goal_weight()
+        current_weight = self.stats().current_weight
+
+        if goal_weight is None or current_weight is None:
+            return GoalOut(
+                goal_weight_kg=goal_weight,
+                current_weight=current_weight,
+                remaining_kg=None,
+                progress_percent=None,
+            )
+
+        remaining_kg = round(current_weight - goal_weight, 2)
+        if current_weight <= goal_weight:
+            progress_percent = 100.0
+        else:
+            progress_percent = round(max(0.0, min(100.0, (goal_weight / current_weight) * 100)), 1)
+
+        return GoalOut(
+            goal_weight_kg=goal_weight,
+            current_weight=current_weight,
+            remaining_kg=remaining_kg,
+            progress_percent=progress_percent,
+        )
+
+    def update_goal(self, payload: GoalUpdate) -> GoalOut:
+        self.repository.upsert_goal_weight(payload.goal_weight_kg)
+        return self.get_goal()
+
+    def export_entries_csv(self) -> str:
+        rows = self.repository.list_entries_for_export()
+        output = io.StringIO()
+        writer = csv.DictWriter(output, fieldnames=["date", "weight_kg", "note"])
+        writer.writeheader()
+        for row in rows:
+            writer.writerow(
+                {
+                    "date": row["entry_date"],
+                    "weight_kg": row["weight_kg"],
+                    "note": row["note"] or "",
+                }
+            )
+        return output.getvalue()

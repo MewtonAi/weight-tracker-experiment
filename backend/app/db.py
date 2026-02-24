@@ -27,5 +27,14 @@ def init_db() -> None:
     conn.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_weight_entries_entry_date ON weight_entries(entry_date)"
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS goal_settings (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            goal_weight_kg REAL NOT NULL,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
     conn.commit()
     conn.close()
