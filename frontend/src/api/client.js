@@ -7,6 +7,12 @@ const FIELD_LABELS = {
   goal_weight_kg: 'Goal weight',
 };
 
+const CODE_MESSAGE_MAP = {
+  ENTRY_DATE_EXISTS: 'An entry already exists for this date. Edit that date instead.',
+  ENTRY_NOT_FOUND: 'That entry no longer exists. Refresh and try again.',
+  INTERNAL_SERVER_ERROR: 'Server error. Please try again in a moment.',
+};
+
 function buildValidationFieldErrors(details) {
   if (!Array.isArray(details)) {
     return {};
@@ -33,12 +39,12 @@ export class ApiError extends Error {
 }
 
 export function toUserMessage(error, fallback) {
-  if (!(error instanceof ApiError)) {
-    return fallback;
+  if (error instanceof TypeError) {
+    return 'Unable to reach the server. Check your connection and API URL, then retry.';
   }
 
-  if (error.code === 'ENTRY_DATE_EXISTS') {
-    return 'An entry already exists for this date. Edit that date instead.';
+  if (!(error instanceof ApiError)) {
+    return fallback;
   }
 
   if (error.code === 'VALIDATION_ERROR') {
@@ -49,13 +55,17 @@ export function toUserMessage(error, fallback) {
     return 'Please check your input and try again.';
   }
 
-  return error.message || fallback;
+  if (error.code === 'HTTP_ERROR' && error.message) {
+    return error.message;
+  }
+
+  return CODE_MESSAGE_MAP[error.code] ?? error.message ?? fallback;
 }
 
-async function parseResponse(response) {
+async function parseResponse(response, { parseAs = 'auto' } = {}) {
   const contentType = response.headers.get('content-type') || '';
-  const isJson = contentType.includes('application/json');
-  const body = isJson ? await response.json().catch(() => null) : await response.text();
+  const shouldParseJson = parseAs === 'json' || (parseAs === 'auto' && contentType.includes('application/json'));
+  const body = shouldParseJson ? await response.json().catch(() => null) : await response.text();
 
   if (!response.ok) {
     throw new ApiError({
@@ -69,9 +79,17 @@ async function parseResponse(response) {
   return body;
 }
 
-async function request(path, options) {
-  const response = await fetch(`${API_BASE_URL}${path}`, options);
-  return parseResponse(response);
+async function request(path, options = {}) {
+  const { parseAs = 'auto', headers, ...fetchOptions } = options;
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    ...fetchOptions,
+    headers: {
+      Accept: 'application/json, text/csv;q=0.9, */*;q=0.8',
+      ...headers,
+    },
+  });
+
+  return parseResponse(response, { parseAs });
 }
 
 export const apiClient = {
@@ -100,5 +118,8 @@ export const apiClient = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     }),
-  exportCsv: () => request('/entries/export.csv'),
+  exportCsv: () =>
+    request('/entries/export.csv', {
+      parseAs: 'text',
+    }),
 };
