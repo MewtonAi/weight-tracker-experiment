@@ -32,7 +32,7 @@ import {
   IconX,
 } from '@tabler/icons-react';
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { apiClient, toUserMessage } from './api/client';
+import { ApiError, apiClient, toUserMessage } from './api/client';
 
 export default function App() {
   const { colorScheme, setColorScheme } = useMantineColorScheme();
@@ -47,6 +47,7 @@ export default function App() {
   const [editingId, setEditingId] = useState(null);
   const [editingOriginalDate, setEditingOriginalDate] = useState(null);
   const [goalInput, setGoalInput] = useState(70);
+  const [formErrors, setFormErrors] = useState({});
 
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -194,6 +195,7 @@ export default function App() {
     setEntryDate(new Date(row.entry_date));
     setWeight(row.weight_kg);
     setNote(row.note || '');
+    setFormErrors({});
   };
 
   const onDelete = async (id) => {
@@ -335,8 +337,12 @@ export default function App() {
                 <TextInput
                   label="Note (optional)"
                   value={note}
-                  onChange={(e) => setNote(e.target.value)}
+                  onChange={(e) => {
+                    setNote(e.target.value);
+                    setFormErrors((prev) => ({ ...prev, note: undefined }));
+                  }}
                   disabled={isSubmitting}
+                  error={formErrors.note}
                 />
                 <Group mt={{ base: 0, sm: 25 }} grow={isMobile} wrap={isMobile ? 'wrap' : 'nowrap'}>
                   <Button onClick={submitEntry} loading={isSubmitting} fullWidth={isMobile}>

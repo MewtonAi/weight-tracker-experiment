@@ -53,6 +53,14 @@ describe('App', () => {
     });
   });
 
+  it('shows load failure fallback message', async () => {
+    apiClient.getEntries.mockRejectedValueOnce(new Error('network down'));
+
+    renderApp();
+
+    expect(await screen.findByText('Failed to load latest data.')).toBeInTheDocument();
+  });
+
   it('adds entry successfully', async () => {
     const user = userEvent.setup();
     apiClient.createEntry.mockResolvedValue({ id: 1 });
