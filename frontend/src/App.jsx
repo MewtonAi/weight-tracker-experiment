@@ -223,6 +223,7 @@ export default function App() {
             <Title order={isMobile ? 3 : 2}>Weight Tracker MVP</Title>
             <ActionIcon
               variant="default"
+              aria-label="Toggle color scheme"
               onClick={() => setColorScheme(colorScheme === 'dark' ? 'light' : 'dark')}
             >
               {colorScheme === 'dark' ? <IconSun size={18} /> : <IconMoon size={18} />}
@@ -373,6 +374,7 @@ export default function App() {
                             <Group gap="xs" wrap="nowrap">
                               <ActionIcon
                                 variant="light"
+                                aria-label={`Edit entry ${row.entry_date}`}
                                 onClick={() => onEdit(row)}
                                 disabled={isSubmitting || deletingId === row.id}
                               >
@@ -381,6 +383,7 @@ export default function App() {
                               <ActionIcon
                                 variant="light"
                                 color="red"
+                                aria-label={`Delete entry ${row.entry_date}`}
                                 onClick={() => onDelete(row.id)}
                                 loading={deletingId === row.id}
                                 disabled={isSubmitting}
