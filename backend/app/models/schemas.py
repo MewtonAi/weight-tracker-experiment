@@ -38,14 +38,3 @@ class GoalOut(BaseModel):
     current_weight: float | None
     remaining_kg: float | None
     progress_percent: float | None
-
-
-class GoalUpdate(BaseModel):
-    goal_weight_kg: float = Field(..., ge=20, le=400)
-
-
-class GoalOut(BaseModel):
-    goal_weight_kg: float | None
-    current_weight: float | None
-    remaining_kg: float | None
-    progress_percent: float | None

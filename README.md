@@ -45,6 +45,9 @@ python -m venv .venv
 # source .venv/bin/activate
 
 pip install -r requirements.txt
+# Optional env config:
+#   copy .env.example .env
+#   set CORS_ORIGINS if needed
 alembic upgrade head
 uvicorn main:app --reload
 ```
@@ -60,6 +63,8 @@ alembic downgrade -1          # rollback one revision
 alembic revision -m "msg"     # create new migration file
 ```
 
+Schema is migration-driven: the API no longer auto-creates tables at startup.
+
 ### Backend tests
 ```bash
 cd backend
@@ -70,6 +75,9 @@ pytest -q
 ```bash
 cd frontend
 npm install
+# Optional env config:
+#   copy .env.example .env
+#   set VITE_API_BASE_URL=http://127.0.0.1:8000
 npm run dev
 ```
 
