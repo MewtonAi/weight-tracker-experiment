@@ -32,34 +32,7 @@ import {
   IconX,
 } from '@tabler/icons-react';
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { ApiError, apiClient } from './api/client';
-
-function mapApiErrorToMessage(error, fallback) {
-  if (!(error instanceof ApiError)) {
-    return fallback;
-  }
-
-  if (error.code === 'ENTRY_DATE_EXISTS') {
-    return 'An entry already exists for this date. Edit that date instead.';
-  }
-
-  if (error.code === 'VALIDATION_ERROR') {
-    const firstIssue = Array.isArray(error.details) ? error.details[0] : null;
-    if (firstIssue?.loc && firstIssue?.msg) {
-      const field = firstIssue.loc[firstIssue.loc.length - 1];
-      const labels = {
-        entry_date: 'Date',
-        weight_kg: 'Weight',
-        note: 'Note',
-        goal_weight_kg: 'Goal weight',
-      };
-      return `${labels[field] ?? field}: ${firstIssue.msg}`;
-    }
-    return 'Please check your input and try again.';
-  }
-
-  return error.message || fallback;
-}
+import { apiClient, toUserMessage } from './api/client';
 
 export default function App() {
   const { colorScheme, setColorScheme } = useMantineColorScheme();
@@ -72,6 +45,7 @@ export default function App() {
   const [weight, setWeight] = useState(70);
   const [note, setNote] = useState('');
   const [editingId, setEditingId] = useState(null);
+  const [editingOriginalDate, setEditingOriginalDate] = useState(null);
   const [goalInput, setGoalInput] = useState(70);
 
   const [isLoading, setIsLoading] = useState(true);
@@ -103,7 +77,7 @@ export default function App() {
         setGoalInput(goalPayload.goal_weight_kg);
       }
     } catch (error) {
-      showNotification('error', mapApiErrorToMessage(error, 'Failed to load latest data.'));
+      showNotification('error', toUserMessage(error, 'Failed to load latest data.'));
     } finally {
       setIsLoading(false);
     }
@@ -117,7 +91,18 @@ export default function App() {
     };
   }, []);
 
+  const cancelEdit = () => {
+    setEditingId(null);
+    setEditingOriginalDate(null);
+    setEntryDate(new Date());
+    setWeight(70);
+    setNote('');
+    setFormErrors({});
+  };
+
   const submitEntry = async () => {
+    setFormErrors({});
+
     if (!entryDate) {
       showNotification('error', 'Please select a date before saving.');
       return;
@@ -134,34 +119,51 @@ export default function App() {
       return;
     }
 
+    const isDateChangeDuringEdit = editingId && editingOriginalDate && payload.entry_date !== editingOriginalDate;
+    if (isDateChangeDuringEdit) {
+      const confirmed = window.confirm(
+        `You changed the date from ${editingOriginalDate} to ${payload.entry_date}. This may overwrite a different day entry. Continue?`,
+      );
+      if (!confirmed) {
+        return;
+      }
+    }
+
     setIsSubmitting(true);
 
     try {
       if (editingId) {
         await apiClient.updateEntry(editingId, payload);
-        setEditingId(null);
+        cancelEdit();
       } else {
         await apiClient.createEntry(payload);
+        setNote('');
       }
 
-      setNote('');
       await loadData();
       showNotification('success', editingId ? 'Entry updated successfully.' : 'Entry added successfully.');
     } catch (error) {
-      showNotification('error', mapApiErrorToMessage(error, editingId ? 'Failed to update entry.' : 'Failed to add entry.'));
+      if (error instanceof ApiError && error.code === 'VALIDATION_ERROR') {
+        setFormErrors(error.fieldErrors);
+      }
+      showNotification('error', toUserMessage(error, editingId ? 'Failed to update entry.' : 'Failed to add entry.'));
     } finally {
       setIsSubmitting(false);
     }
   };
 
   const saveGoal = async () => {
+    setFormErrors((prev) => ({ ...prev, goal_weight_kg: undefined }));
     setIsGoalSaving(true);
     try {
       const goalPayload = await apiClient.updateGoal({ goal_weight_kg: Number(goalInput) });
       setGoal(goalPayload);
       showNotification('success', 'Goal updated.');
     } catch (error) {
-      showNotification('error', mapApiErrorToMessage(error, 'Could not save goal.'));
+      if (error instanceof ApiError && error.code === 'VALIDATION_ERROR') {
+        setFormErrors((prev) => ({ ...prev, goal_weight_kg: error.fieldErrors.goal_weight_kg }));
+      }
+      showNotification('error', toUserMessage(error, 'Could not save goal.'));
     } finally {
       setIsGoalSaving(false);
     }
@@ -180,7 +182,7 @@ export default function App() {
       URL.revokeObjectURL(url);
       showNotification('success', 'CSV exported.');
     } catch (error) {
-      showNotification('error', mapApiErrorToMessage(error, 'Could not export CSV.'));
+      showNotification('error', toUserMessage(error, 'Could not export CSV.'));
     } finally {
       setIsExporting(false);
     }
@@ -188,6 +190,7 @@ export default function App() {
 
   const onEdit = (row) => {
     setEditingId(row.id);
+    setEditingOriginalDate(row.entry_date);
     setEntryDate(new Date(row.entry_date));
     setWeight(row.weight_kg);
     setNote(row.note || '');
@@ -200,14 +203,13 @@ export default function App() {
       await apiClient.deleteEntry(id);
 
       if (editingId === id) {
-        setEditingId(null);
-        setNote('');
+        cancelEdit();
       }
 
       await loadData();
       showNotification('success', 'Entry deleted.');
     } catch (error) {
-      showNotification('error', mapApiErrorToMessage(error, 'Unable to delete entry.'));
+      showNotification('error', toUserMessage(error, 'Unable to delete entry.'));
     } finally {
       setDeletingId(null);
     }
@@ -269,12 +271,16 @@ export default function App() {
                 <Group gap="xs">
                   <NumberInput
                     value={goalInput}
-                    onChange={setGoalInput}
+                    onChange={(value) => {
+                      setGoalInput(value);
+                      setFormErrors((prev) => ({ ...prev, goal_weight_kg: undefined }));
+                    }}
                     min={20}
                     max={400}
                     step={0.1}
                     w={140}
                     disabled={isGoalSaving}
+                    error={formErrors.goal_weight_kg}
                   />
                   <Button size="xs" onClick={saveGoal} loading={isGoalSaving}>Save goal</Button>
                 </Group>
@@ -289,26 +295,66 @@ export default function App() {
           </Card>
 
           <Card withBorder>
-            <SimpleGrid cols={{ base: 1, sm: 2, md: 4 }} spacing="sm" verticalSpacing="sm">
-              <DateInput label="Date" value={entryDate} onChange={setEntryDate} disabled={isSubmitting} />
-              <NumberInput
-                label="Weight (kg)"
-                value={weight}
-                min={20}
-                max={400}
-                onChange={setWeight}
-                disabled={isSubmitting}
-              />
-              <TextInput
-                label="Note (optional)"
-                value={note}
-                onChange={(e) => setNote(e.target.value)}
-                disabled={isSubmitting}
-              />
-              <Button onClick={submitEntry} loading={isSubmitting} mt={{ base: 0, sm: 25 }}>
-                {editingId ? 'Update' : 'Add'}
-              </Button>
-            </SimpleGrid>
+            <Stack gap="sm">
+              {editingId && (
+                <Alert color="blue" icon={<IconEdit size={16} />}>
+                  <Group justify="space-between" wrap="wrap" gap="xs">
+                    <Text size="sm">
+                      Editing entry from <strong>{editingOriginalDate}</strong>
+                    </Text>
+                    <Button variant="subtle" size="xs" onClick={cancelEdit}>
+                      Cancel edit
+                    </Button>
+                  </Group>
+                </Alert>
+              )}
+
+              <SimpleGrid cols={{ base: 1, sm: 2, md: 4 }} spacing="sm" verticalSpacing="sm">
+                <DateInput
+                  label="Date"
+                  value={entryDate}
+                  onChange={(value) => {
+                    setEntryDate(value);
+                    setFormErrors((prev) => ({ ...prev, entry_date: undefined }));
+                  }}
+                  disabled={isSubmitting}
+                  error={formErrors.entry_date}
+                />
+                <NumberInput
+                  label="Weight (kg)"
+                  value={weight}
+                  min={20}
+                  max={400}
+                  onChange={(value) => {
+                    setWeight(value);
+                    setFormErrors((prev) => ({ ...prev, weight_kg: undefined }));
+                  }}
+                  disabled={isSubmitting}
+                  error={formErrors.weight_kg}
+                />
+                <TextInput
+                  label="Note (optional)"
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                  disabled={isSubmitting}
+                />
+                <Group mt={{ base: 0, sm: 25 }} grow={isMobile} wrap={isMobile ? 'wrap' : 'nowrap'}>
+                  <Button onClick={submitEntry} loading={isSubmitting} fullWidth={isMobile}>
+                    {editingId ? 'Update' : 'Add'}
+                  </Button>
+                  {editingId && (
+                    <Button
+                      variant="default"
+                      onClick={cancelEdit}
+                      disabled={isSubmitting}
+                      fullWidth={isMobile}
+                    >
+                      Cancel
+                    </Button>
+                  )}
+                </Group>
+              </SimpleGrid>
+            </Stack>
           </Card>
 
           <Card withBorder h={isMobile ? 260 : 320}>
@@ -352,6 +398,46 @@ export default function App() {
               <Group justify="center" py="md">
                 <Loader size="sm" />
               </Group>
+            ) : isMobile ? (
+              <Stack gap="xs">
+                {entries.length ? (
+                  entries.map((row) => (
+                    <Card key={row.id} withBorder p="sm">
+                      <Stack gap={6}>
+                        <Group justify="space-between" align="center" wrap="nowrap">
+                          <Text fw={600}>{row.entry_date}</Text>
+                          <Badge variant="light">{row.weight_kg} kg</Badge>
+                        </Group>
+                        <Text size="sm" c="dimmed">{row.note || 'No note'}</Text>
+                        <Group grow>
+                          <Button
+                            variant="light"
+                            leftSection={<IconEdit size={14} />}
+                            onClick={() => onEdit(row)}
+                            disabled={isSubmitting || deletingId === row.id}
+                          >
+                            Edit
+                          </Button>
+                          <Button
+                            variant="light"
+                            color="red"
+                            leftSection={<IconTrash size={14} />}
+                            onClick={() => onDelete(row.id)}
+                            loading={deletingId === row.id}
+                            disabled={isSubmitting}
+                          >
+                            Delete
+                          </Button>
+                        </Group>
+                      </Stack>
+                    </Card>
+                  ))
+                ) : (
+                  <Text c="dimmed" ta="center" py="sm">
+                    No entries yet.
+                  </Text>
+                )}
+              </Stack>
             ) : (
               <ScrollArea>
                 <Table striped miw={620}>
