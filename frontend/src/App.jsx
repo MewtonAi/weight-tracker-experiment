@@ -32,11 +32,33 @@ import {
   IconX,
 } from '@tabler/icons-react';
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { ApiError, apiClient } from './api/client';
 
-const API = 'http://127.0.0.1:8000';
+function mapApiErrorToMessage(error, fallback) {
+  if (!(error instanceof ApiError)) {
+    return fallback;
+  }
 
-function parseApiError(responseBody, fallback) {
-  return responseBody?.message || fallback;
+  if (error.code === 'ENTRY_DATE_EXISTS') {
+    return 'An entry already exists for this date. Edit that date instead.';
+  }
+
+  if (error.code === 'VALIDATION_ERROR') {
+    const firstIssue = Array.isArray(error.details) ? error.details[0] : null;
+    if (firstIssue?.loc && firstIssue?.msg) {
+      const field = firstIssue.loc[firstIssue.loc.length - 1];
+      const labels = {
+        entry_date: 'Date',
+        weight_kg: 'Weight',
+        note: 'Note',
+        goal_weight_kg: 'Goal weight',
+      };
+      return `${labels[field] ?? field}: ${firstIssue.msg}`;
+    }
+    return 'Please check your input and try again.';
+  }
+
+  return error.message || fallback;
 }
 
 export default function App() {
@@ -68,25 +90,20 @@ export default function App() {
 
   const loadData = async () => {
     try {
-      const [entriesRes, statsRes, goalRes] = await Promise.all([
-        fetch(`${API}/entries`),
-        fetch(`${API}/stats`),
-        fetch(`${API}/goal`),
+      const [entriesPayload, statsPayload, goalPayload] = await Promise.all([
+        apiClient.getEntries(),
+        apiClient.getStats(),
+        apiClient.getGoal(),
       ]);
 
-      if (!entriesRes.ok || !statsRes.ok || !goalRes.ok) {
-        throw new Error('Unable to load data from server.');
-      }
-
-      setEntries(await entriesRes.json());
-      setStats(await statsRes.json());
-      const goalPayload = await goalRes.json();
+      setEntries(entriesPayload);
+      setStats(statsPayload);
       setGoal(goalPayload);
       if (goalPayload.goal_weight_kg) {
         setGoalInput(goalPayload.goal_weight_kg);
       }
     } catch (error) {
-      showNotification('error', error.message || 'Failed to load latest data.');
+      showNotification('error', mapApiErrorToMessage(error, 'Failed to load latest data.'));
     } finally {
       setIsLoading(false);
     }
@@ -120,26 +137,18 @@ export default function App() {
     setIsSubmitting(true);
 
     try {
-      const response = await fetch(`${API}/entries${editingId ? `/${editingId}` : ''}`, {
-        method: editingId ? 'PUT' : 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-
-      if (!response.ok) {
-        const errBody = await response.json().catch(() => null);
-        throw new Error(parseApiError(errBody, editingId ? 'Failed to update entry.' : 'Failed to add entry.'));
-      }
-
       if (editingId) {
+        await apiClient.updateEntry(editingId, payload);
         setEditingId(null);
+      } else {
+        await apiClient.createEntry(payload);
       }
 
       setNote('');
       await loadData();
       showNotification('success', editingId ? 'Entry updated successfully.' : 'Entry added successfully.');
     } catch (error) {
-      showNotification('error', error.message || 'Could not save entry.');
+      showNotification('error', mapApiErrorToMessage(error, editingId ? 'Failed to update entry.' : 'Failed to add entry.'));
     } finally {
       setIsSubmitting(false);
     }
@@ -148,19 +157,11 @@ export default function App() {
   const saveGoal = async () => {
     setIsGoalSaving(true);
     try {
-      const response = await fetch(`${API}/goal`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ goal_weight_kg: Number(goalInput) }),
-      });
-      if (!response.ok) {
-        const errBody = await response.json().catch(() => null);
-        throw new Error(parseApiError(errBody, 'Failed to save goal.'));
-      }
-      setGoal(await response.json());
+      const goalPayload = await apiClient.updateGoal({ goal_weight_kg: Number(goalInput) });
+      setGoal(goalPayload);
       showNotification('success', 'Goal updated.');
     } catch (error) {
-      showNotification('error', error.message || 'Could not save goal.');
+      showNotification('error', mapApiErrorToMessage(error, 'Could not save goal.'));
     } finally {
       setIsGoalSaving(false);
     }
@@ -169,11 +170,7 @@ export default function App() {
   const exportCsv = async () => {
     setIsExporting(true);
     try {
-      const response = await fetch(`${API}/entries/export.csv`);
-      if (!response.ok) {
-        throw new Error('Failed to export CSV.');
-      }
-      const csvText = await response.text();
+      const csvText = await apiClient.exportCsv();
       const blob = new Blob([csvText], { type: 'text/csv;charset=utf-8;' });
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
@@ -183,7 +180,7 @@ export default function App() {
       URL.revokeObjectURL(url);
       showNotification('success', 'CSV exported.');
     } catch (error) {
-      showNotification('error', error.message || 'Could not export CSV.');
+      showNotification('error', mapApiErrorToMessage(error, 'Could not export CSV.'));
     } finally {
       setIsExporting(false);
     }
@@ -200,12 +197,7 @@ export default function App() {
     setDeletingId(id);
 
     try {
-      const response = await fetch(`${API}/entries/${id}`, { method: 'DELETE' });
-
-      if (!response.ok) {
-        const errBody = await response.json().catch(() => null);
-        throw new Error(parseApiError(errBody, 'Failed to delete entry.'));
-      }
+      await apiClient.deleteEntry(id);
 
       if (editingId === id) {
         setEditingId(null);
@@ -215,7 +207,7 @@ export default function App() {
       await loadData();
       showNotification('success', 'Entry deleted.');
     } catch (error) {
-      showNotification('error', error.message || 'Unable to delete entry.');
+      showNotification('error', mapApiErrorToMessage(error, 'Unable to delete entry.'));
     } finally {
       setDeletingId(null);
     }
